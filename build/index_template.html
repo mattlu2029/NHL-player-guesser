@@ -400,13 +400,7 @@ function renderStats(highlight){
       '<div><div class="num">'+cur+'</div><div class="cap">Daily<br>Streak</div></div>'+
       '<div><div class="num">'+s.maxStreak+'</div><div class="cap">Max<br>Streak</div></div>'+
     '</div>'+
-    '<div class="disttitle">Guess distribution (wins)</div><div class="dist">'+rows+'</div>'+
-    '<div class="row-btns" style="justify-content:center;margin-top:18px">'+
-      (backendEnabled()?'<button class="btn" id="lbBtn">🏆 Leaderboard</button>':'')+
-      '<button class="btn" id="statsReset">Reset stats</button>'+
-    '</div>';
-  $("#statsReset").addEventListener("click", ()=>{ if(confirm('Reset all statistics?')){ saveStats(blankStats()); if(authUser) syncUp(); renderStats(); } });
-  if(backendEnabled()) $("#lbBtn").addEventListener("click", renderLeaderboard);
+    '<div class="disttitle">Guess distribution (wins)</div><div class="dist">'+rows+'</div>';
 }
 function openStats(highlight){ renderStats(highlight); $("#statsModal").classList.remove("hidden"); }
 $("#statsBtn").addEventListener("click", ()=>openStats());
