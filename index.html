@@ -207,7 +207,7 @@
     </div>
     <div class="status">
       <span class="left">Guesses left: <b id="left">10</b></span>
-      <button id="resetBtn" class="btn">New game</button>
+      <button id="giveUpBtn" class="btn">Give up</button>
     </div>
 
     <div class="board">
@@ -576,6 +576,8 @@ function startGame(label){
   $("#modeLabel").textContent = label;
   $("#setup").classList.add("hidden");
   $("#game").classList.remove("hidden");
+  $("#guessInput").disabled = false;
+  $("#giveUpBtn").disabled = false;
   $("#guessInput").focus();
 }
 
@@ -607,7 +609,7 @@ $("#modeFriend").addEventListener("click", ()=>{
   $("#setupInput").focus();
 });
 $("#startBtn").addEventListener("click", ()=>{ gameMode='friend'; startGame("🧑‍🤝‍🧑 Friend's pick"); });
-$("#resetBtn").addEventListener("click", resetAll);
+$("#giveUpBtn").addEventListener("click", giveUp);
 
 /* ---- guessing ---- */
 attachSearch($("#guessInput"), $("#guessMenu"), p=>{
@@ -672,12 +674,15 @@ function renderRow(p){
   $("#rows").appendChild(row);
 }
 
-function showResult(won, lockedDaily){
+function showResult(won, lockedDaily, gaveUp){
   $("#guessInput").disabled = true;
+  $("#giveUpBtn").disabled = true;
   const r = $("#result");
   r.classList.remove("hidden");
   const t = target;
-  const head = won
+  const head = gaveUp
+    ? '<h2 class="lose">You gave up</h2>'
+    : won
     ? '<h2 class="win">🎉 You got it in '+guesses.length+'/'+MAX+'!</h2>'
     : '<h2 class="lose">Out of guesses!</h2>';
   const sub = lockedDaily
@@ -696,6 +701,13 @@ function endGame(won){
   if(gameMode==='daily') saveDaily({ date:todayISO(), target:target.id, guesses:guesses.map(g=>g.id), won:won });
   recordResult(won, guesses.length, gameMode);
   showResult(won, false);
+}
+function giveUp(){
+  if(over || !target) return;
+  over = true;
+  if(gameMode==='daily') saveDaily({ date:todayISO(), target:target.id, guesses:guesses.map(g=>g.id), won:false });
+  recordResult(false, guesses.length, gameMode);
+  showResult(false, false, true);
 }
 function restoreDaily(rec){
   if(rec.target && byId[rec.target]) target = byId[rec.target];
