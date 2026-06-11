@@ -371,6 +371,8 @@ const MAX = 10;
 function blankStats(){ return {played:0, won:0, dist:{}, curStreak:0, maxStreak:0, lastDailyDate:null}; }
 function loadStats(){ try{ return JSON.parse(localStorage.getItem('nhlStats')) || blankStats(); }catch(e){ return blankStats(); } }
 function saveStats(s){ try{ localStorage.setItem('nhlStats', JSON.stringify(s)); }catch(e){} }
+function loadDaily(){ try{ return JSON.parse(localStorage.getItem('nhlDaily')); }catch(e){ return null; } }
+function saveDaily(d){ try{ localStorage.setItem('nhlDaily', JSON.stringify(d)); }catch(e){} }
 function prevDateISO(iso){ const d=new Date(iso+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); }
 function effectiveStreak(s){ if(!s.lastDailyDate) return 0; const t=todayISO(); return (s.lastDailyDate===t || s.lastDailyDate===prevDateISO(t)) ? s.curStreak : 0; }
 function recordResult(won, guessCount, mode){
@@ -432,8 +434,13 @@ function onAuthChanged(){
 }
 async function syncUp(){
   if(!sb||!authUser) return;
-  const s=loadStats();
-  try{ await sb.from('player_stats').upsert({ user_id:authUser.id, name:displayName(), played:s.played, won:s.won, dist:s.dist, cur_streak:s.curStreak, max_streak:s.maxStreak, last_daily_date:s.lastDailyDate, updated_at:new Date().toISOString() }, { onConflict:'user_id' }); }catch(e){ console.warn('syncUp', e); }
+  const s=loadStats(), d=loadDaily()||{};
+  const base={ user_id:authUser.id, name:displayName(), played:s.played, won:s.won, dist:s.dist, cur_streak:s.curStreak, max_streak:s.maxStreak, last_daily_date:s.lastDailyDate, updated_at:new Date().toISOString() };
+  const full=Object.assign({}, base, { daily_date:d.date||null, daily_target:d.target||null, daily_guesses:d.guesses||null, daily_won:(typeof d.won==='boolean'?d.won:null) });
+  try{
+    const { error } = await sb.from('player_stats').upsert(full, { onConflict:'user_id' });
+    if(error){ await sb.from('player_stats').upsert(base, { onConflict:'user_id' }); } // daily_* columns not migrated yet
+  }catch(e){ try{ await sb.from('player_stats').upsert(base, { onConflict:'user_id' }); }catch(_){} }
 }
 async function pullStats(){
   if(!sb||!authUser) return;
@@ -443,6 +450,7 @@ async function pullStats(){
     if(data){
       saveStats({ played:data.played||0, won:data.won||0, dist:data.dist||{}, curStreak:data.cur_streak||0, maxStreak:data.max_streak||0, lastDailyDate:data.last_daily_date||null });
       try{ if(data.name && !localStorage.getItem('nhlName')) localStorage.setItem('nhlName', data.name); }catch(e){}
+      if(data.daily_date){ saveDaily({ date:data.daily_date, target:data.daily_target||null, guesses:data.daily_guesses||[], won:!!data.daily_won }); }
     } else { await syncUp(); }
     if(!$("#statsModal").classList.contains("hidden") && $("#statsBody").querySelector('.statgrid')) renderStats();
   }catch(e){ console.warn('pullStats', e); }
@@ -582,9 +590,14 @@ attachSearch($("#setupInput"), $("#setupMenu"), p=>{
 $("#modeDaily").addEventListener("click", async ()=>{
   const btn=$("#modeDaily"), t=btn.querySelector('.mtitle'), orig=t.textContent;
   btn.disabled=true; t.textContent="Loading…";
-  try{ target = await resolveDaily(); } finally{ t.textContent=orig; btn.disabled=false; }
+  try{
+    if(authUser){ try{ await Promise.race([pullStats(), new Promise(r=>setTimeout(r,4000))]); }catch(e){} }
+    target = await resolveDaily();
+  } finally{ t.textContent=orig; btn.disabled=false; }
   gameMode='daily';
-  startGame("📅 Daily Challenge · "+todayLabel());
+  const rec = loadDaily();
+  if(authUser && rec && rec.date===todayISO()){ restoreDaily(rec); }   // already finished today -> locked, show their board
+  else { startGame("📅 Daily Challenge · "+todayLabel()); }
 });
 $("#modeRandom").addEventListener("click", ()=>{ target = PLAYERS[Math.floor(Math.random()*PLAYERS.length)]; gameMode='random'; startGame("🎲 Random Player"); });
 $("#modeFriend").addEventListener("click", ()=>{
@@ -659,23 +672,40 @@ function renderRow(p){
   $("#rows").appendChild(row);
 }
 
-function endGame(won){
-  over = true;
-  recordResult(won, guesses.length, gameMode);
+function showResult(won, lockedDaily){
   $("#guessInput").disabled = true;
   const r = $("#result");
   r.classList.remove("hidden");
   const t = target;
-  r.innerHTML =
-    (won
-      ? '<h2 class="win">🎉 You got it in '+guesses.length+'/'+MAX+'!</h2><p class="hint">Nicely done.</p>'
-      : '<h2 class="lose">Out of guesses!</h2><p class="hint">The secret player was…</p>')+
+  const head = won
+    ? '<h2 class="win">🎉 You got it in '+guesses.length+'/'+MAX+'!</h2>'
+    : '<h2 class="lose">Out of guesses!</h2>';
+  const sub = lockedDaily
+    ? '<p class="hint">You\'ve already played today\'s Daily Challenge — come back tomorrow!</p>'
+    : (won ? '<p class="hint">Nicely done.</p>' : '<p class="hint">The secret player was…</p>');
+  r.innerHTML = head + sub +
     '<div class="target"><div class="pn">'+t.name+'</div>'+
     '<div class="pmeta">'+POSNAME[t.pos]+' · '+t.team+' ('+(DIVNAME[TEAM_DIV[t.team]]||'?')+') · age '+ageFrom(t.birth)+' · #'+t.num+'</div></div>'+
     '<div class="row-btns" style="justify-content:center"><button class="btn" id="statsBtn2">📊 Stats</button><button class="btn primary" id="againBtn">Play again</button></div>';
   $("#againBtn").addEventListener("click", resetAll);
   $("#statsBtn2").addEventListener("click", ()=>openStats(won?guesses.length:null));
   r.scrollIntoView({behavior:"smooth", block:"center"});
+}
+function endGame(won){
+  over = true;
+  if(gameMode==='daily') saveDaily({ date:todayISO(), target:target.id, guesses:guesses.map(g=>g.id), won:won });
+  recordResult(won, guesses.length, gameMode);
+  showResult(won, false);
+}
+function restoreDaily(rec){
+  if(rec.target && byId[rec.target]) target = byId[rec.target];
+  guesses=[]; over=false;
+  $("#rows").innerHTML=""; $("#guessInput").value="";
+  startGame("📅 Daily Challenge · "+todayLabel());
+  (rec.guesses||[]).forEach(id=>{ const p=byId[id]; if(p){ guesses.push(p); renderRow(p); } });
+  $("#left").textContent = Math.max(0, MAX - guesses.length);
+  over=true; $("#guessInput").disabled=true;
+  showResult(!!rec.won, true);
 }
 
 function resetAll(){

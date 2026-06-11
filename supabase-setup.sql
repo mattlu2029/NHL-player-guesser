@@ -1,5 +1,6 @@
 -- NHL Player Guess — shared stats / leaderboard
 -- Run this once in your Supabase project: SQL Editor -> New query -> paste -> Run.
+-- Safe to re-run: it only adds anything missing (e.g. the daily-challenge columns).
 
 create table if not exists public.player_stats (
   user_id        uuid primary key references auth.users(id) on delete cascade,
@@ -13,11 +14,17 @@ create table if not exists public.player_stats (
   updated_at     timestamptz default now()
 );
 
+-- Daily-challenge replay lock: remembers a signed-in user's finished daily + their guesses,
+-- so they can't replay today's puzzle and their previous board is restored.
+alter table public.player_stats
+  add column if not exists daily_date    text,
+  add column if not exists daily_target  bigint,
+  add column if not exists daily_guesses jsonb,
+  add column if not exists daily_won     boolean;
+
 alter table public.player_stats enable row level security;
 
 -- Anyone (even signed-out visitors) can read rows -> powers the public leaderboard.
--- If you'd rather only let signed-in users see it, change `using (true)`
--- to `using (auth.role() = 'authenticated')`.
 drop policy if exists "read all stats" on public.player_stats;
 create policy "read all stats" on public.player_stats
   for select using (true);
